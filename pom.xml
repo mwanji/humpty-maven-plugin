@@ -69,16 +69,6 @@
       <groupId>co.mewf.humpty</groupId>
       <artifactId>humpty</artifactId>
     </dependency>
-    <dependency>
-      <groupId>co.mewf.humpty</groupId>
-      <artifactId>humpty-watch</artifactId>
-      <version>1.0.0-SNAPSHOT</version>
-    </dependency>
-    <dependency>
-      <groupId>org.reflections</groupId>
-      <artifactId>reflections</artifactId>
-      <version>0.9.9</version>
-    </dependency>
   </dependencies>
   <build>
     <plugins>
