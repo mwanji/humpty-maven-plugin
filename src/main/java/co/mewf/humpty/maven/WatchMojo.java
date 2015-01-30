@@ -33,7 +33,7 @@ import org.webjars.WebJarAssetLocator;
 import co.mewf.humpty.Pipeline;
 import co.mewf.humpty.config.Configuration;
 import co.mewf.humpty.config.HumptyBootstrap;
-import co.mewf.humpty.watch.AssetWatcher;
+import co.mewf.humpty.tools.Watcher;
 
 
 @Mojo(name = "watch", requiresProject = true, requiresDependencyResolution = ResolutionScope.RUNTIME)
@@ -165,6 +165,6 @@ public class WatchMojo extends AbstractMojo {
     
     getLog().info("assetDirs: " + assetDirs);
     getLog().info("outputDir: " + outputDir);
-    new AssetWatcher(pipeline, assetDirPaths, Paths.get(outputDir), Paths.get(config), appendableLog).start();
+    new Watcher(pipeline, assetDirPaths, Paths.get(outputDir), Paths.get(config), appendableLog).start();
   }
 }
