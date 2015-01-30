@@ -28,7 +28,7 @@ import org.webjars.WebJarAssetLocator;
 import co.mewf.humpty.Pipeline;
 import co.mewf.humpty.config.Configuration;
 import co.mewf.humpty.config.HumptyBootstrap;
-import co.mewf.humpty.tools.AssetDigester;
+import co.mewf.humpty.tools.Digester;
 
 
 @Mojo(name = "digest", requiresProject = true, requiresDependencyResolution = ResolutionScope.RUNTIME)
@@ -147,6 +147,6 @@ public class DigestMojo extends AbstractMojo {
 
     Pipeline pipeline = new HumptyBootstrap(configuration, locator).createPipeline();
 
-    new AssetDigester().processBundles(pipeline, configuration.getBundles(), buildDir, globalOptions.getDigestFile());
+    new Digester().processBundles(pipeline, configuration.getBundles(), buildDir, globalOptions.getDigestFile());
   }
 }
