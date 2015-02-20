@@ -139,7 +139,7 @@ public class DigestMojo extends AbstractMojo {
     
     SortedMap<String, String> defaultWebjarIndex = WebJarAssetLocator.getFullPathIndex(Pattern.compile(".*"), urlClassLoader).entrySet().stream().filter(e -> {
       return !metaInfParent.resolve(e.getValue()).toFile().exists();
-    }).collect(Collectors.toMap(e -> (String) e.getKey(), e -> (String) e.getValue(), (u,v) -> { throw new IllegalStateException(String.format("Duplicate key %s", u)); }, TreeMap::new));
+    }).collect(Collectors.toMap(e -> e.getKey(), e -> e.getValue(), (u,v) -> { throw new IllegalStateException(String.format("Duplicate key %s", u)); }, TreeMap::new));
     webjarIndex.putAll(defaultWebjarIndex);
     WebJarAssetLocator locator = new WebJarAssetLocator(webjarIndex);
 
