@@ -1,17 +1,21 @@
 package co.mewf.humpty.maven;
 
+import static java.nio.charset.StandardCharsets.UTF_8;
+
 import java.io.File;
+import java.io.IOException;
 import java.net.URL;
 import java.net.URLClassLoader;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.Paths;
 import java.util.ArrayList;
+import java.util.HashSet;
 import java.util.List;
-import java.util.SortedMap;
-import java.util.TreeMap;
+import java.util.Set;
 import java.util.regex.Pattern;
 import java.util.stream.Collectors;
+import java.util.stream.Stream;
 
 import org.apache.maven.artifact.DependencyResolutionRequiredException;
 import org.apache.maven.model.Resource;
@@ -43,6 +47,7 @@ public class DigestMojo extends AbstractMojo {
   @Override
   public void execute() throws MojoExecutionException, MojoFailureException {
     List<URL> allUrls = new ArrayList<>();
+    Set<String> assetPaths = new HashSet<>();
 
     project.getCompileSourceRoots().forEach(sourceRoot -> {
       try {
@@ -52,7 +57,7 @@ public class DigestMojo extends AbstractMojo {
       }
     });
     
-    Path configPath = project.getResources().stream()
+    project.getResources().stream()
       .map(Resource::getDirectory)
       .map(Paths::get)
       .map(path -> {
@@ -63,17 +68,20 @@ public class DigestMojo extends AbstractMojo {
         }
       })
       .flatMap(s -> s)
-      .map(path -> {
+      .forEach(path -> {
         try {
           allUrls.add(path.toFile().toURI().toURL());
         } catch (Exception e) {
           throw new RuntimeException(e);
         }
-        return path;
-      })
-      .filter(path -> {
-        return path.getFileName().toString().equals("humpty.toml");
-      })
+      });
+    
+    Path configPath = project.getResources()
+      .stream()
+      .map(Resource::getDirectory)
+      .map(Paths::get)
+      .map(path -> path.resolve("humpty.toml"))
+      .filter(path -> path.toFile().exists())
       .findFirst()
       .orElseThrow(() -> new IllegalStateException("No humpty.toml file found!"));
     
@@ -81,26 +89,31 @@ public class DigestMojo extends AbstractMojo {
     Configuration.GlobalOptions globalOptions = configuration.getGlobalOptions();
     Path buildDir = globalOptions.getBuildDir();
 
-    SortedMap<String, String> webjarIndex = new TreeMap<>();
-
     try {
-      Files.walk(globalOptions.getAssetsDir())
-        .map(globalOptions.getAssetsDir()::relativize)
-        .map(path -> {
-          StringBuilder reverse = new StringBuilder();
-          path.iterator().forEachRemaining(p -> {
-            reverse.insert(0, '/');
-            reverse.insert(0, p.getFileName());
-          });
-          webjarIndex.put(reverse.toString(), path.toString());
-  
-          try {
-            return path.toFile().toURI().toURL();
-          } catch (Exception e) {
-            throw new RuntimeException(e);
-          }
-        })
-        .forEach(allUrls::add);
+      Path assetsDir = project.getResources()
+        .stream()
+        .map(Resource::getDirectory)
+        .map(dir -> dir + "/" + globalOptions.getAssetsDir())
+        .map(File::new)
+        .filter(File::exists)
+        .findFirst()
+        .map(File::toPath)
+        .orElseThrow(() -> new RuntimeException("Assets dir not found on classpath: " + globalOptions.getAssetsDir()));
+      
+      try (Stream<Path> paths = Files.walk(assetsDir)) {
+        paths
+          .filter(path -> path.toFile().isFile())
+          .map(assetsDir.getParent()::relativize)
+          .map(path -> {
+            try {
+              assetPaths.add(path.toString());
+              return path.toUri().toURL();
+            } catch (Exception e) {
+              throw new RuntimeException(e);
+            }
+          })
+          .forEach(allUrls::add);
+      }
     } catch (Exception e) {
       throw new RuntimeException(e);
     }
@@ -131,22 +144,22 @@ public class DigestMojo extends AbstractMojo {
       };
     };
     
-    Path metaInfPath = buildDir.getName(0);
-    for (int i = 1; !metaInfPath.getFileName().toString().equals("META-INF"); i++) {
-      metaInfPath = metaInfPath.resolve(buildDir.getName(i));
-    }
-    Path metaInfParent = metaInfPath.getParent();
-    
-    SortedMap<String, String> defaultWebjarIndex = WebJarAssetLocator.getFullPathIndex(Pattern.compile(".*"), urlClassLoader).entrySet().stream().filter(e -> {
-      return !metaInfParent.resolve(e.getValue()).toFile().exists();
-    }).collect(Collectors.toMap(e -> e.getKey(), e -> e.getValue(), (u,v) -> { throw new IllegalStateException(String.format("Duplicate key %s", u)); }, TreeMap::new));
-    webjarIndex.putAll(defaultWebjarIndex);
-    WebJarAssetLocator locator = new WebJarAssetLocator(webjarIndex);
-
     Thread.currentThread().setContextClassLoader(urlClassLoader);
 
-    Pipeline pipeline = new HumptyBootstrap(configuration, locator).createPipeline();
-
-    new Digester().processBundles(pipeline, configuration.getBundles(), buildDir, globalOptions.getDigestFile());
+    assetPaths.addAll(WebJarAssetLocator.getFullPathIndex(Pattern.compile(".*"), urlClassLoader).values());
+    
+    Pipeline pipeline = new HumptyBootstrap(configuration, new WebJarAssetLocator(assetPaths)).createPipeline();
+    
+    String digestString = new Digester().processBundles(pipeline, configuration.getBundles(), buildDir)
+      .entrySet()
+      .stream()
+      .map(entry -> "\"" + entry.getKey() + "\" = \"" + entry.getValue() + "\"")
+      .collect(Collectors.joining("\n"));
+    
+    try {
+      Files.write(globalOptions.getDigestFile(), digestString.getBytes(UTF_8));
+    } catch (IOException e) {
+      throw new RuntimeException(e);
+    }
   }
 }
