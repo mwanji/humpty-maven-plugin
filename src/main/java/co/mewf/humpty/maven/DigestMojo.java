@@ -5,7 +5,6 @@ import static java.nio.charset.StandardCharsets.UTF_8;
 import java.io.File;
 import java.io.IOException;
 import java.net.URL;
-import java.net.URLClassLoader;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.Paths;
@@ -76,14 +75,7 @@ public class DigestMojo extends AbstractMojo {
         }
       });
     
-    Path configPath = project.getResources()
-      .stream()
-      .map(Resource::getDirectory)
-      .map(Paths::get)
-      .map(path -> path.resolve("humpty.toml"))
-      .filter(path -> path.toFile().exists())
-      .findFirst()
-      .orElseThrow(() -> new IllegalStateException("No humpty.toml file found!"));
+    Path configPath = Utils.getConfigPath(project).orElseThrow(() -> new IllegalStateException("No humpty.toml file found!"));
     
     Configuration configuration = Configuration.load(configPath);
     Configuration.GlobalOptions globalOptions = configuration.getGlobalOptions();
@@ -132,17 +124,7 @@ public class DigestMojo extends AbstractMojo {
     }
 
     // Parent-last classloader
-    URLClassLoader urlClassLoader = new URLClassLoader(allUrls.toArray(new URL[0]), getClass().getClassLoader()) {
-      public URL getResource(String name) {
-        URL url = findResource(name);
-        
-        if (url == null) {
-          url = getParent().getResource(name);
-        }
-        
-        return url;
-      };
-    };
+    ClassLoader urlClassLoader = Utils.createParentLastClassloader(allUrls, getClass().getClassLoader());
     
     Thread.currentThread().setContextClassLoader(urlClassLoader);
 
