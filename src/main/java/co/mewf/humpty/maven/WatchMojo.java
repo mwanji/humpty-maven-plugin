@@ -138,7 +138,7 @@ public class WatchMojo extends AbstractMojo {
       throw new RuntimeException(e);
     }
 
-    Path watchToml = Paths.get(project.getResources().get(0).getDirectory()).resolve("humpty-watch.toml");
+    Path watchToml = Paths.get(project.getResources().get(0).getDirectory()).resolve(configuration.getGlobalOptions().getWatchFile());
     
     Runtime.getRuntime().addShutdownHook(new Thread(() -> {
       try {
