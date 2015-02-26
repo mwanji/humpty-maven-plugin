@@ -1,21 +1,25 @@
 package co.mewf.humpty.maven;
 
-import static java.util.stream.Collectors.toList;
+import static java.nio.charset.StandardCharsets.UTF_8;
+import static java.nio.file.StandardOpenOption.CREATE;
+import static java.nio.file.StandardOpenOption.TRUNCATE_EXISTING;
+import static java.nio.file.StandardOpenOption.WRITE;
 
 import java.io.File;
 import java.io.IOException;
 import java.net.URL;
-import java.net.URLClassLoader;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.Paths;
 import java.util.ArrayList;
-import java.util.Arrays;
+import java.util.HashMap;
+import java.util.HashSet;
 import java.util.List;
-import java.util.SortedMap;
-import java.util.TreeMap;
+import java.util.Map;
+import java.util.Set;
 import java.util.regex.Pattern;
 import java.util.stream.Collectors;
+import java.util.stream.Stream;
 
 import org.apache.maven.artifact.DependencyResolutionRequiredException;
 import org.apache.maven.plugin.AbstractMojo;
@@ -25,7 +29,6 @@ import org.apache.maven.plugin.logging.Log;
 import org.apache.maven.plugin.logging.SystemStreamLog;
 import org.apache.maven.plugins.annotations.Component;
 import org.apache.maven.plugins.annotations.Mojo;
-import org.apache.maven.plugins.annotations.Parameter;
 import org.apache.maven.plugins.annotations.ResolutionScope;
 import org.apache.maven.project.MavenProject;
 import org.webjars.WebJarAssetLocator;
@@ -42,18 +45,14 @@ public class WatchMojo extends AbstractMojo {
   @Component
   private MavenProject project;
   
-  @Parameter(property = "assetDirs", alias = "assetDirs", defaultValue = "src/main/resources/META-INF/resources/webjars")
-  private String assetDirs;
-  
-  @Parameter(property = "outputDir", defaultValue = "src/main/resources/META-INF/resources/webjars")
-  private String outputDir;
-  
-  @Parameter(property = "configFile", defaultValue = "humpty.toml")
-  private String config;
-
   @Override
   public void execute() throws MojoExecutionException, MojoFailureException {
     List<URL> allUrls = new ArrayList<>();
+    Set<String> assetPaths = new HashSet<>();
+
+    Path configPath = Utils.getConfigPath(project).orElseThrow(() -> new IllegalStateException("No humpty.toml file found!"));
+    Configuration configuration = Configuration.load(configPath);
+
     project.getCompileSourceRoots().forEach(sourceRoot -> {
       try {
         allUrls.add(new File(sourceRoot).toURI().toURL());
@@ -62,33 +61,26 @@ public class WatchMojo extends AbstractMojo {
       }
     });
 
-    SortedMap<String, String> webjarIndex = new TreeMap<>();
-    List<Path> assetDirPaths = Arrays.stream(assetDirs.split(",")).map(String::trim).map(Paths::get).collect(toList());
-
-    assetDirPaths.stream().map(assetDir -> {
-        try {
-          return Files.walk(assetDir).map(assetDir::relativize);
-        } catch (Exception e) {
-          throw new RuntimeException(e);
-        }
-      })
-      .flatMap(s -> s)
-      .map(path -> {
-        
-        StringBuilder reverse = new StringBuilder();
-        path.iterator().forEachRemaining(p -> {
-          reverse.insert(0, '/');
-          reverse.insert(0, p.getFileName());
-        });
-        webjarIndex.put(reverse.toString(), path.toString());
-        
-        try {
-          return path.toFile().toURI().toURL();
-        } catch (Exception e) {
-          throw new RuntimeException(e);
-        }
-      })
-      .forEach(allUrls::add);
+    Path assetsDir = Utils.getFullAssetsDirPath(project, configuration.getGlobalOptions().getAssetsDir()).orElseThrow(() -> new RuntimeException("Assets dir not found on classpath: " + configuration.getGlobalOptions().getAssetsDir()));
+    
+    try (Stream<Path> paths = Files.walk(assetsDir)) {
+      paths.map(assetsDir.getParent()::relativize)
+        .map(path -> {
+          assetPaths.add(path.toString());
+          
+          return path;
+        })
+        .map(path -> {
+          try {
+            return path.toUri().toURL();
+          } catch (Exception e) {
+            throw new RuntimeException(e);
+          }
+        })
+        .forEach(allUrls::add);
+    } catch (IOException e) {
+      throw new RuntimeException(e);
+    }
     
     try {
       project.getRuntimeClasspathElements().forEach(element -> {
@@ -103,37 +95,12 @@ public class WatchMojo extends AbstractMojo {
       throw new RuntimeException(e);
     }
 
-    // Parent-last classloader
-    URLClassLoader urlClassLoader = new URLClassLoader(allUrls.toArray(new URL[0]), getClass().getClassLoader()) {
-      public URL getResource(String name) {
-        URL url = findResource(name);
-        
-        if (url == null) {
-          url = getParent().getResource(name);
-        }
-        
-        return url;
-      };
-    };
-    
-    Path outputPath = Paths.get(outputDir);
-    Path metaInfPath = outputPath.getName(0);
-    for (int i = 1; !metaInfPath.getFileName().toString().equals("META-INF"); i++) {
-      metaInfPath = metaInfPath.resolve(outputPath.getName(i));
-    }
-    Path metaInfParent = metaInfPath.getParent();
-    
-    SortedMap<String, String> defaultWebjarIndex = WebJarAssetLocator.getFullPathIndex(Pattern.compile(".*"), urlClassLoader).entrySet().stream().filter(e -> {
-      return !metaInfParent.resolve(e.getValue()).toFile().exists();
-    }).collect(Collectors.toMap(e -> (String) e.getKey(), e -> (String) e.getValue(), (u,v) -> { throw new IllegalStateException(String.format("Duplicate key %s", u)); }, TreeMap::new));
-    webjarIndex.putAll(defaultWebjarIndex);
-    WebJarAssetLocator locator = new WebJarAssetLocator(webjarIndex);
-
+    ClassLoader urlClassLoader = Utils.createParentLastClassloader(allUrls, getClass().getClassLoader());
     Thread.currentThread().setContextClassLoader(urlClassLoader);
-
-    Configuration configuration = Configuration.load(config);
-    Configuration.Options webjarsOptions = configuration.getOptionsFor(() -> "webjars");
     
+    assetPaths.addAll(WebJarAssetLocator.getFullPathIndex(Pattern.compile(".*"), urlClassLoader).values());
+    WebJarAssetLocator locator = new WebJarAssetLocator(assetPaths);
+
     Pipeline pipeline = new HumptyBootstrap(configuration, locator).createPipeline();
 
     Appendable appendableLog = new Appendable() {
@@ -163,8 +130,38 @@ public class WatchMojo extends AbstractMojo {
       }
     };
     
-    getLog().info("assetDirs: " + assetDirs);
-    getLog().info("outputDir: " + outputDir);
-    new Watcher(pipeline, assetDirPaths, Paths.get(outputDir), Paths.get(config), appendableLog).start();
+    Map<Path, Path> cache = new HashMap<>();
+    Path cacheDir;
+    try {
+      cacheDir = Files.createTempDirectory(null);
+    } catch (IOException e) {
+      throw new RuntimeException(e);
+    }
+
+    Path watchToml = Paths.get(project.getResources().get(0).getDirectory()).resolve("humpty-watch.toml");
+    
+    Runtime.getRuntime().addShutdownHook(new Thread(() -> {
+      try {
+        Files.deleteIfExists(watchToml);
+      } catch (Exception e) {
+        throw new RuntimeException(e);
+      }
+    }));
+    
+    new Watcher(pipeline, assetsDir, configuration, appendableLog, (source, target) -> {
+      Path outputPath = cacheDir.resolve(source);
+      cache.put(source, outputPath);
+      String watchTomlString = cache.entrySet().stream().map(entry -> {
+        return "\"" + entry.getKey() + "\" = \"" + entry.getValue() + "\"";
+      }).collect(Collectors.joining("\n", "", "\n"));
+      
+      try {
+        Files.write(outputPath, target.getBytes(UTF_8), CREATE, WRITE, TRUNCATE_EXISTING);
+        Files.write(watchToml, watchTomlString.getBytes(UTF_8), CREATE, WRITE, TRUNCATE_EXISTING);
+        getLog().info(source + " -> " + outputPath);
+      } catch (Exception e) {
+        e.printStackTrace();
+      }
+    }).start();
   }
 }
