@@ -139,7 +139,7 @@ public class DigestMojo extends AbstractMojo {
       .collect(Collectors.joining("\n"));
     
     try {
-      Files.write(globalOptions.getDigestFile(), digestString.getBytes(UTF_8));
+      Files.write(Paths.get(project.getResources().get(0).getDirectory()).resolve(globalOptions.getDigestFile()), digestString.getBytes(UTF_8));
     } catch (IOException e) {
       throw new RuntimeException(e);
     }
