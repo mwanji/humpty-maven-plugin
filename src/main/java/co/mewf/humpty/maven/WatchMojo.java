@@ -148,15 +148,20 @@ public class WatchMojo extends AbstractMojo {
       }
     }));
     
-    new Watcher(pipeline, assetsDir, configuration, appendableLog, (source, target) -> {
-      Path outputPath = cacheDir.resolve(source);
-      cache.put(source, outputPath);
+    new Watcher(pipeline, assetsDir, configuration, appendableLog, (source, contents) -> {
+      Path outputPath = cache.computeIfAbsent(source, p -> {
+        try {
+          return Files.createTempFile(cacheDir, null, null);
+        } catch (Exception e) {
+          throw new RuntimeException(e);
+        }
+      });
       String watchTomlString = cache.entrySet().stream().map(entry -> {
         return "\"" + entry.getKey() + "\" = \"" + entry.getValue() + "\"";
       }).collect(Collectors.joining("\n", "", "\n"));
       
       try {
-        Files.write(outputPath, target.getBytes(UTF_8), CREATE, WRITE, TRUNCATE_EXISTING);
+        Files.write(outputPath, contents.getBytes(UTF_8), CREATE, WRITE, TRUNCATE_EXISTING);
         Files.write(watchToml, watchTomlString.getBytes(UTF_8), CREATE, WRITE, TRUNCATE_EXISTING);
         getLog().info(source + " -> " + outputPath);
       } catch (Exception e) {
