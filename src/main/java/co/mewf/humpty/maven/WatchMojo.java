@@ -12,10 +12,8 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.Paths;
 import java.util.ArrayList;
-import java.util.HashMap;
 import java.util.HashSet;
 import java.util.List;
-import java.util.Map;
 import java.util.Set;
 import java.util.regex.Pattern;
 import java.util.stream.Collectors;
@@ -37,6 +35,8 @@ import co.mewf.humpty.Pipeline;
 import co.mewf.humpty.config.Configuration;
 import co.mewf.humpty.config.HumptyBootstrap;
 import co.mewf.humpty.tools.Watcher;
+
+import com.moandjiezana.toml.Toml;
 
 
 @Mojo(name = "watch", requiresProject = true, requiresDependencyResolution = ResolutionScope.RUNTIME)
@@ -130,7 +130,6 @@ public class WatchMojo extends AbstractMojo {
       }
     };
     
-    Map<Path, Path> cache = new HashMap<>();
     Path cacheDir;
     try {
       cacheDir = Files.createTempDirectory(null);
@@ -138,34 +137,51 @@ public class WatchMojo extends AbstractMojo {
       throw new RuntimeException(e);
     }
 
-    Path watchToml = Paths.get(project.getResources().get(0).getDirectory()).resolve(configuration.getGlobalOptions().getWatchFile());
+    Path watchTomlPath = Paths.get(project.getResources().get(0).getDirectory()).resolve(configuration.getGlobalOptions().getWatchFile());
+    
+    getLog().info("watchTomlPath = " + watchTomlPath);
     
     Runtime.getRuntime().addShutdownHook(new Thread(() -> {
       try {
-        Files.deleteIfExists(watchToml);
+        Files.deleteIfExists(watchTomlPath);
       } catch (Exception e) {
         throw new RuntimeException(e);
       }
     }));
     
+    String watchTomlContents = configuration.getBundles().stream()
+      .map(b -> {
+        String bundleName = b.getName();
+        return b.stream()
+          .map(assetName -> bundleName + "/" + assetName)
+          .map(a -> {
+            try {
+              Path tempFile = Files.createTempFile(cacheDir, null, null);
+              Files.write(tempFile, pipeline.process(a).getAsset().getBytes(UTF_8), CREATE, WRITE, TRUNCATE_EXISTING);
+              
+              return "\"" + a + "\" = \"" + tempFile + "\"";
+            } catch (Exception e) {
+              throw new RuntimeException(e);
+            }
+          })
+          .collect(Collectors.joining("\n", "", "\n"));
+      })
+      .collect(Collectors.joining());
+
+    try {
+      Files.write(watchTomlPath, watchTomlContents.getBytes(UTF_8), CREATE, WRITE, TRUNCATE_EXISTING);
+    } catch (IOException e) {
+      throw new RuntimeException(e);
+    }
+
+    Toml watchToml = new Toml().parse(watchTomlPath.toFile());
+    
     new Watcher(pipeline, assetsDir, configuration, appendableLog, (source, contents) -> {
-      Path outputPath = cache.computeIfAbsent(source, p -> {
-        try {
-          return Files.createTempFile(cacheDir, null, null);
-        } catch (Exception e) {
-          throw new RuntimeException(e);
-        }
-      });
-      String watchTomlString = cache.entrySet().stream().map(entry -> {
-        return "\"" + entry.getKey() + "\" = \"" + entry.getValue() + "\"";
-      }).collect(Collectors.joining("\n", "", "\n"));
-      
       try {
-        Files.write(outputPath, contents.getBytes(UTF_8), CREATE, WRITE, TRUNCATE_EXISTING);
-        Files.write(watchToml, watchTomlString.getBytes(UTF_8), CREATE, WRITE, TRUNCATE_EXISTING);
-        getLog().info(source + " -> " + outputPath);
+        Path updatePath = Paths.get(watchToml.getString("\"" + source + "\""));
+        Files.write(updatePath, contents.getBytes(UTF_8), CREATE, WRITE, TRUNCATE_EXISTING);
       } catch (Exception e) {
-        e.printStackTrace();
+        getLog().error(e);
       }
     }).start();
   }
