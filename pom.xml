@@ -7,7 +7,7 @@
     <version>0.11.0</version>
   </parent>
   <artifactId>humpty-maven-plugin</artifactId>
-  <version>0.2.0</version>
+  <version>0.3.0-SNAPSHOT</version>
   <packaging>maven-plugin</packaging>
   <name>humpty-maven-plugin</name>
   <description>Put your web assets back together, from Maven and the command line</description>
@@ -29,7 +29,7 @@
     <connection>${github.repo}/humpty-maven-plugin.git</connection>
     <developerConnection>${github.repo}/humpty-maven-plugin.git</developerConnection>
     <url>${github.url}/humpty-maven-plugin</url>
-    <tag>humpty-maven-plugin-0.2.0</tag>
+    <tag>HEAD</tag>
   </scm>
   <issueManagement>
     <system>Github Issues</system>
